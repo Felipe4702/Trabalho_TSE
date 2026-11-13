@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Conda / ambientes locais
+.conda/
+.venv/
+venv/
+.env
+.env.*
+
+# VS Code / Jupyter
+.vscode/
+.ipynb_checkpoints/
+
+# Streamlit: nunca publicar segredos
+.streamlit/secrets.toml
+
+# Arquivos brutos grandes do TSE (baixe localmente)
+dados/brutos/*.zip
+
+# Temporarios
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
