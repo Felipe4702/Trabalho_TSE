@@ -1,3 +1,4 @@
+
 """Gera mapas Folium do 1o turno presidencial em Divinopolis (2026).
 
 Entradas (geradas por integrar_dados.py):
@@ -7,7 +8,6 @@ Entradas (geradas por integrar_dados.py):
 Saidas:
     mapas/primeiro_turno/primeiro_turno_candidato_13.html
     mapas/primeiro_turno/primeiro_turno_candidato_22.html
-    (ou os numeros dos dois candidatos mais votados)
 
 As areas desenhadas sao celulas de Voronoi em torno dos locais de votacao,
 recortadas a uma faixa de 1,2 km desses pontos. NAO sao limites oficiais
@@ -36,8 +36,10 @@ DESTINO = RAIZ / "mapas" / "primeiro_turno"
 ARQUIVO_VOTOS = DADOS / "votos_localizados_divinopolis_2026.csv"
 ARQUIVO_SECOES = DADOS / "resumo_secoes_divinopolis_2026.csv"
 CHAVES = ["CD_MUNICIPIO", "NR_TURNO", "NR_ZONA", "NR_SECAO"]
+
 # 1200 m de entorno dos locais, apenas para limitar a area de visualizacao.
 RAIO_VISUALIZACAO_METROS = 1200
+
 PALETAS = {
     13: ["#fff5f5", "#fecaca", "#f87171", "#dc2626", "#7f1d1d"],
     22: ["#eff6ff", "#bfdbfe", "#60a5fa", "#2563eb", "#1e3a8a"],
@@ -67,6 +69,7 @@ def validar_entradas(votos: pd.DataFrame, secoes: pd.DataFrame) -> None:
         faltam = sorted(set(campos) - set(dados.columns))
         if faltam:
             raise ValueError(f"Arquivo de {nome}: colunas ausentes: {faltam}")
+
     if secoes.duplicated(CHAVES).any():
         raise ValueError("O resumo tem secoes/turnos duplicados.")
     if votos.duplicated(CHAVES + ["NR_VOTAVEL"]).any():
@@ -83,6 +86,7 @@ def preparar_pontos(votos: pd.DataFrame, secoes: pd.DataFrame):
     # Apenas votos nominais; 95 = branco, 96 = nulo.
     v = votos.loc[(votos.NR_TURNO == 1) & votos.NR_VOTAVEL.between(10, 94)].copy()
     s = secoes.loc[secoes.NR_TURNO == 1].copy()
+
     v["latitude"] = v["latitude"].round(7)
     v["longitude"] = v["longitude"].round(7)
     s["latitude"] = s["latitude"].round(7)
@@ -104,6 +108,7 @@ def preparar_pontos(votos: pd.DataFrame, secoes: pd.DataFrame):
         ["QT_VOTOS"].sum().sort_values("QT_VOTOS", ascending=False)
         .head(2)
     )
+
     if len(candidatos) < 2:
         raise ValueError("Nao foram encontrados dois candidatos no 1o turno.")
 
@@ -135,32 +140,92 @@ def construir_voronoi(totais_ponto: pd.DataFrame) -> gpd.GeoDataFrame:
         geometry=gpd.points_from_xy(totais_ponto.longitude, totais_ponto.latitude),
         crs="EPSG:4326",
     ).to_crs("EPSG:32723")
+
     if len(pontos) < 3:
         raise ValueError("Sao necessarios tres locais distintos para o Voronoi.")
     pontos["ID_PONTO"] = range(len(pontos))
 
     # Voronoi define a area mais proxima de cada local. Uma faixa de entorno
     # impede que as celulas se estendam indefinidamente para zonas sem dados.
-    areas_visiveis = unary_union([geom.buffer(RAIO_VISUALIZACAO_METROS) for geom in pontos.geometry])
+    areas_visiveis = unary_union([
+        geom.buffer(RAIO_VISUALIZACAO_METROS) for geom in pontos.geometry
+    ])
     diagrama = voronoi_diagram(MultiPoint(list(pontos.geometry)), edges=False)
+
     registro = []
     for celula in diagrama.geoms:
-        # Um ponto interno de cada celula e mais proximo de seu respectivo local.
         interior = celula.representative_point()
-        indice = min(range(len(pontos)), key=lambda i: interior.distance(pontos.geometry.iloc[i]))
+        indice = min(
+            range(len(pontos)),
+            key=lambda i: interior.distance(pontos.geometry.iloc[i])
+        )
         recorte = celula.intersection(areas_visiveis)
         if not recorte.is_empty:
-            registro.append({"ID_PONTO": int(pontos.iloc[indice].ID_PONTO), "geometry": recorte})
+            registro.append({
+                "ID_PONTO": int(pontos.iloc[indice].ID_PONTO),
+                "geometry": recorte
+            })
+
     regioes = gpd.GeoDataFrame(registro, geometry="geometry", crs=pontos.crs)
     if regioes.ID_PONTO.duplicated().any() or len(regioes) != len(pontos):
         raise RuntimeError("Falha na construcao das celulas de Voronoi.")
+
     return regioes.merge(
-        pontos.drop(columns="geometry"), on="ID_PONTO", how="inner", validate="one_to_one"
+        pontos.drop(columns="geometry"),
+        on="ID_PONTO", how="inner", validate="one_to_one"
     ).to_crs("EPSG:4326")
 
 
 def formatar_pontuacao(valor: float) -> str:
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+# ==========================
+# TOOLTIP AO PASSAR O MOUSE
+# ==========================
+
+def tooltip_secoes(grupo: pd.DataFrame, nome_local: str) -> folium.Tooltip:
+    linhas = []
+
+    for s in grupo.sort_values(["NR_ZONA", "NR_SECAO"]).head(8).itertuples(index=False):
+        nome = str(s.candidato_lider)
+        if "LULA" in nome.upper():
+            nome = "Lula"
+        elif "BOLSONARO" in nome.upper():
+            nome = "Flavio Bolsonaro"
+
+        linhas.append(
+            "<tr>"
+            f"<td>{int(s.NR_ZONA)}/{int(s.NR_SECAO)}</td>"
+            f"<td>{escape(nome)}</td>"
+            f"<td style='text-align:right'>{formatar_pontuacao(s.percentual_lider)}%</td>"
+            "</tr>"
+        )
+
+    restantes = max(0, len(grupo) - 8)
+    aviso = (
+        f"<p style='margin:6px 0 0;color:#64748b'>"
+        f"+{restantes} secoes. Clique no ponto para ver todas.</p>"
+        if restantes else ""
+    )
+
+    html = (
+        "<div style='width:380px;max-width:75vw;font:12px Arial;white-space:normal'>"
+        f"<b style='font-size:13px'>{escape(nome_local)}</b>"
+        f"<p style='margin:5px 0'>{len(grupo)} secoes eleitorais</p>"
+        "<table style='width:100%;border-collapse:collapse'>"
+        "<tr style='background:#f1f5f9'>"
+        "<th>Zona/Secao</th><th>Lider</th><th>% lider</th></tr>"
+        + "".join(linhas) +
+        "</table>" + aviso + "</div>"
+    )
+
+    return folium.Tooltip(
+        html, sticky=True,
+        style="background:white;color:#1f2937;padding:10px;"
+              "border:1px solid #cbd5e1;border-radius:8px;"
+              "white-space:normal;"
+    )
 
 
 def popup_secoes(grupo: pd.DataFrame, nome_local: str) -> folium.Popup:
@@ -187,7 +252,9 @@ def popup_secoes(grupo: pd.DataFrame, nome_local: str) -> folium.Popup:
             "</tr>"
         )
     conteudo = cabecalho + "".join(linhas) + "</table></div></div>"
-    return folium.Popup(folium.IFrame(html=conteudo, width=520, height=320), max_width=550)
+    return folium.Popup(
+        folium.IFrame(html=conteudo, width=520, height=320), max_width=550
+    )
 
 
 def gerar_mapa(
@@ -216,21 +283,26 @@ def gerar_mapa(
         chave = (item.latitude, item.longitude)
         grupo_secoes = secoes_por_ponto[chave]
         votos_local = votos_por_ponto[chave]
-        qtd = votos_local.loc[votos_local.NR_VOTAVEL == numero_candidato, "QT_VOTOS"].sum()
+
+        qtd = votos_local.loc[
+            votos_local.NR_VOTAVEL == numero_candidato, "QT_VOTOS"
+        ].sum()
         total = int(item.TOTAL_VALIDOS)
         percentagem = 100.0 * qtd / total if total else 0.0
 
         # Lider do local com todos os votos de suas secoes somados.
-        lider = votos_local.sort_values(["QT_VOTOS", "NR_VOTAVEL"], ascending=[False, True]).iloc[0]
+        lider = votos_local.sort_values(
+            ["QT_VOTOS", "NR_VOTAVEL"], ascending=[False, True]
+        ).iloc[0]
         porcentagem_lider = 100 * lider.QT_VOTOS / total if total else 0
-        nomes_local = grupo_secoes.NM_LOCAL_VOTACAO.dropna().astype(str).unique().tolist()
+
+        nomes_local = (
+            grupo_secoes.NM_LOCAL_VOTACAO.dropna().astype(str).unique().tolist()
+        )
         nome_local = " / ".join(nomes_local)
-        zonas = sorted({int(z) for z in grupo_secoes.NR_ZONA})
-        resumo_secoes = ", ".join(f"{int(x.NR_ZONA)}/{int(x.NR_SECAO)}" for x in grupo_secoes.itertuples())
 
         propriedades = {
             "LOCAL": nome_local,
-            "ZONAS_SECOES": resumo_secoes,
             "LIDER": str(lider.NM_VOTAVEL),
             "PERCENTUAL_LIDER": f"{formatar_pontuacao(porcentagem_lider)}%",
             "CANDIDATO": nome_candidato,
@@ -243,25 +315,33 @@ def gerar_mapa(
             "properties": propriedades,
             "geometry": item.geometry.__geo_interface__,
         }
+
         geo = folium.GeoJson(
             area,
             style_function=lambda feat, escala=escala: {
-                "fillColor": escala(float(feat["properties"]["PERCENTUAL_CANDIDATO"].replace("%", "").replace(",", "."))),
+                "fillColor": escala(
+                    float(
+                        feat["properties"]["PERCENTUAL_CANDIDATO"]
+                        .replace("%", "").replace(",", ".")
+                    )
+                ),
                 "fillOpacity": 0.70,
                 "color": "#ffffff",
                 "weight": 1.4,
             },
-            highlight_function=lambda feat: {"weight": 3, "color": "#111827", "fillOpacity": 0.87},
-            tooltip=folium.GeoJsonTooltip(
-                fields=["LOCAL", "ZONAS_SECOES", "LIDER", "PERCENTUAL_LIDER", "PERCENTUAL_CANDIDATO"],
-                aliases=["Local: ", "Zona/secao: ", "Lider no local: ", "% do lider: ", "% do candidato no mapa: "],
-                labels=True,
-                sticky=True,
-                style="background-color: white; color: #1f2937; font-size: 12px; padding: 9px; max-width:420px;",
-            ),
+            highlight_function=lambda feat: {
+                "weight": 3, "color": "#111827", "fillOpacity": 0.87
+            },
+            tooltip=tooltip_secoes(grupo_secoes, nome_local),
             popup=folium.GeoJsonPopup(
-                fields=["LOCAL", "LIDER", "PERCENTUAL_LIDER", "VOTOS_CANDIDATO", "TOTAL_VALIDOS"],
-                aliases=["Local:", "Lider:", "% lider:", "Votos do candidato:", "Votos validos:"],
+                fields=[
+                    "LOCAL", "LIDER", "PERCENTUAL_LIDER",
+                    "VOTOS_CANDIDATO", "TOTAL_VALIDOS"
+                ],
+                aliases=[
+                    "Local:", "Lider:", "% lider:",
+                    "Votos do candidato:", "Votos validos:"
+                ],
                 max_width=360,
             ),
         )
@@ -292,8 +372,12 @@ def gerar_mapa(
     Passe o mouse nas areas e clique nos pontos para ver cada secao.
     </div>"""
     mapa.get_root().html.add_child(folium.Element(aviso))
-    mapa.fit_bounds([[base.latitude.min(), base.longitude.min()],
-                     [base.latitude.max(), base.longitude.max()]])
+
+    mapa.fit_bounds([
+        [base.latitude.min(), base.longitude.min()],
+        [base.latitude.max(), base.longitude.max()]
+    ])
+
     DESTINO.mkdir(parents=True, exist_ok=True)
     caminho = DESTINO / f"primeiro_turno_candidato_{numero_candidato}.html"
     mapa.save(str(caminho))
@@ -310,11 +394,15 @@ def main() -> None:
     print("\nMAPAS DO 1o TURNO")
     print(f"Secoes eleitorais: {len(secoes.loc[secoes.NR_TURNO == 1])}")
     print(f"Coordenadas distintas: {len(regioes)}")
+
     for candidato in candidatos.itertuples(index=False):
         numero = int(candidato.NR_VOTAVEL)
         nome = str(candidato.NM_VOTAVEL)
-        destino = gerar_mapa(regioes, secoes_ponto, votos_ponto, numero, nome)
+        destino = gerar_mapa(
+            regioes, secoes_ponto, votos_ponto, numero, nome
+        )
         print(f"{nome} - {int(candidato.QT_VOTOS):,} votos: {destino}")
+
     print("Mapas gerados. Abra os arquivos HTML em um navegador.")
 
 
