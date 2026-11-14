@@ -25,3 +25,21 @@ dados/brutos/*.zip
 *.log
 .DS_Store
 Thumbs.db
+
+# Cache do Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Ambiente virtual
+.venv/
+venv/
+.env/
+
+# Arquivos compactados
+*.zip
+
+# Arquivos temporarios
+.DS_Store
+Thumbs.db
