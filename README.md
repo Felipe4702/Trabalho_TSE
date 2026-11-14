@@ -6,7 +6,7 @@ O trabalho utiliza dados oficiais do Tribunal Superior Eleitoral (TSE), processa
 
 ## Dashboard interativo
 
-**[Acessar o Dashboard Eleitoral de Divinópolis 2026](https://trabalhotse-eleicoes-divinopolis-2026-47.streamlit.app/)**
+**[Acessar o Dashboard Eleitoral de Divinópolis 2026](https://trabalhotse-47.streamlit.app/)**
 
 O dashboard permite visualizar os resultados eleitorais diretamente pelo navegador, sem necessidade de instalar Python, Conda ou executar qualquer código.
 
@@ -102,7 +102,7 @@ Existem três maneiras de consultar os resultados do projeto.
 
 A maneira mais simples é acessar:
 
-**https://trabalhotse-eleicoes-divinopolis-2026-47.streamlit.app/**
+**https://trabalhotse-47.streamlit.app**
 
 O dashboard reúne os mapas, gráficos, indicadores e tabelas eleitorais.
 
